@@ -16,7 +16,6 @@ export default function Pdv() {
   const [verCarrinho, setVerCarrinho] = useState(false);
   const [valorAbertura, setValorAbertura] = useState('');
   
-  // Estados para Data, Hora e Configurações
   const [agora, setAgora] = useState(new Date());
   const [dadosPix, setDadosPix] = useState({ chave: '', beneficiario: '', cidade: 'MARICA' });
   const [mostrarResumo, setMostrarResumo] = useState(false);
@@ -25,13 +24,11 @@ export default function Pdv() {
   const totalVenda = carrinho.reduce((acc, i) => acc + (i.preco * i.qtd), 0);
   const troco = (metodoPgto === 'dinheiro' && Number(valorRecebido) > totalVenda) ? Number(valorRecebido) - totalVenda : 0;
 
-  // 1. RELÓGIO EM TEMPO REAL
   useEffect(() => {
     const timer = setInterval(() => setAgora(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // 2. BUSCAR CONFIGURAÇÕES DO PIX (CHAVE DINÂMICA)
   useEffect(() => {
     const buscarConfig = async () => {
       try {
@@ -44,9 +41,8 @@ export default function Pdv() {
       }
     };
     buscarConfig();
-  }, [metodoPgto]); // Recarrega se o usuário mudar o método para garantir que pegou a última chave
+  }, [metodoPgto]);
 
-  // 3. BUSCAR CALDOS (DINÂMICO)
   useEffect(() => {
     const q = query(collection(db, "estoque"), where("tipo", "==", "caldo"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -56,7 +52,6 @@ export default function Pdv() {
     return () => unsubscribe();
   }, []);
 
-  // 4. BUSCAR BEBIDAS
   useEffect(() => {
     const q = query(collection(db, "estoque"), where("tipo", "==", "bebida"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -66,7 +61,6 @@ export default function Pdv() {
     return () => unsubscribe();
   }, []);
 
-  // 5. VERIFICAR CAIXA ABERTO
   useEffect(() => {
     const carregarCaixa = async () => {
       try {
@@ -197,16 +191,49 @@ export default function Pdv() {
     setCarregando(false);
   };
 
-  // Gerador de Payload Pix Estático BRCode
+  // GERADOR DE PIX CORRIGIDO COM CRC16 E FORMATAÇÃO BACEN
   const gerarPixString = () => {
     if (!dadosPix.chave) return "";
+    
     const valor = totalVenda.toFixed(2);
     const chave = dadosPix.chave.replace(/\s/g, "");
-    const nome = (dadosPix.beneficiario || "CALDOS DA TAY").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const nome = (dadosPix.beneficiario || "CALDOS DA TAY")
+      .toUpperCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
     const cidade = (dadosPix.cidade || "MARICA").toUpperCase();
 
-    // Montagem do payload seguindo padrão BACEN
-    return `00020126360014br.gov.bcb.pix01${chave.length.toString().padStart(2, '0')}${chave}52040000530398654${valor.length.toString().padStart(2, '0')}${valor}5802BR59${nome.length.toString().padStart(2, '0')}${nome}60${cidade.length.toString().padStart(2, '0')}${cidade}62070503***6304`;
+    // Função para formatar [ID][TAMANHO][CONTEUDO]
+    const f = (id, conteudo) => {
+      const tam = conteudo.length.toString().padStart(2, '0');
+      return `${id}${tam}${conteudo}`;
+    };
+
+    // Montagem do Payload Base
+    let payload = 
+      f("00", "01") + 
+      f("26", f("00", "br.gov.bcb.pix") + f("01", chave)) + 
+      "52040000" + 
+      "5303986" + 
+      f("54", valor) + 
+      "5802BR" + 
+      f("59", nome) + 
+      f("60", cidade) + 
+      f("62", f("05", "***")) +
+      "6304"; 
+
+    // Cálculo do CRC16
+    let crc = 0xFFFF;
+    for (let i = 0; i < payload.length; i++) {
+      crc ^= (payload.charCodeAt(i) << 8);
+      for (let j = 0; j < 8; j++) {
+        if ((crc & 0x8000) !== 0) crc = (crc << 1) ^ 0x1021;
+        else crc <<= 1;
+      }
+    }
+    const crcResult = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+    
+    return payload + crcResult;
   };
 
   if (carregando && !caixaAtivo) return <div className="min-h-screen bg-orange-500 flex items-center justify-center text-white font-black uppercase italic text-3xl">Carregando...</div>;
@@ -259,8 +286,6 @@ export default function Pdv() {
       <header className="p-4 bg-white shadow-sm flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-2">
             <Link to="/" className="text-orange-500 font-black text-[10px] italic uppercase px-2 hover:bg-orange-50 py-2 rounded-lg transition-all">⬅ Sair</Link>
-            
-            {/* BOTÃO DE ATALHO PARA CONFIG PIX */}
             <Link to="/config-pix" className="bg-blue-50 text-blue-500 p-2 rounded-xl text-[9px] font-black uppercase hover:bg-blue-100 transition-all flex items-center gap-1">
               ⚙️ Config Pix
             </Link>
@@ -307,7 +332,6 @@ export default function Pdv() {
         ))}
       </main>
 
-      {/* BOTÃO MOBILE CARRINHO */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 lg:hidden flex gap-2 z-30">
          <button onClick={() => setVerCarrinho(true)} className="flex-grow bg-orange-500 text-white py-4 rounded-2xl font-black flex justify-between px-6 items-center shadow-lg active:scale-95 transition-all">
           <span className="text-xs uppercase italic">{carrinho.reduce((a,b)=>a+b.qtd,0)} ITENS</span>
@@ -315,7 +339,6 @@ export default function Pdv() {
         </button>
       </div>
 
-      {/* PAINEL CARRINHO E PIX */}
       {(verCarrinho || (typeof window !== 'undefined' && window.innerWidth > 1024)) && (
         <div className={`fixed inset-0 z-[60] lg:z-20 bg-black/60 backdrop-blur-sm lg:relative lg:bg-transparent lg:inset-auto lg:block ${verCarrinho ? 'flex' : 'hidden'} items-end`}>
           <div className="bg-white w-full max-h-[95vh] rounded-t-[3rem] p-6 shadow-2xl flex flex-col lg:fixed lg:right-4 lg:top-20 lg:w-96 lg:rounded-[3rem] lg:h-[85vh] animate-in slide-in-from-bottom lg:animate-none overflow-y-auto scrollbar-hide">
