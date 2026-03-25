@@ -3,26 +3,30 @@ import Home from './pages/Home';
 import Pdv from './pages/Pdv';
 import Estoque from './pages/Estoque';
 import Configuracoes from './pages/Configuracoes';
+import Relatorios from './pages/Relatorios'; // Importação do novo componente
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Rota Principal */}
+        {/* Painel Central - Rodhon System */}
         <Route path="/" element={<Home />} />
         
-        {/* Rota do PDV (Vendas) */}
+        {/* PDV / Vendas - Caldos da Tay */}
         <Route path="/vender" element={<Pdv />} />
         
-        {/* Rota do Estoque */}
+        {/* Gestão de Estoque */}
         <Route path="/estoque" element={<Estoque />} />
         
-        {/* Rota de Configuração do Pix */}
+        {/* Relatórios de Faturamento e PDF */}
+        <Route path="/relatorios" element={<Relatorios />} />
+        
+        {/* Configurações de Chave Pix */}
         <Route path="/config-pix" element={<Configuracoes />} />
 
         {/* ROTA DE SEGURANÇA: 
-          Se o usuário der refresh em uma página que não existe ou digitar algo errado, 
-          ele será redirecionado para a Home em vez de ver uma tela branca ou 404.
+            Qualquer caminho não reconhecido redireciona para a Home.
+            Isso evita telas brancas no seu domínio personalizado.
         */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

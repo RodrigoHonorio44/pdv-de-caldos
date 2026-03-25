@@ -35,25 +35,37 @@ export default function Home() {
           <span className="text-4xl group-hover:translate-x-2 transition-transform">🚀</span>
         </Link>
 
+        {/* Botão Relatórios - NOVO */}
+        <Link 
+          to="/relatorios" 
+          className="flex items-center justify-between bg-green-600 hover:bg-green-700 text-white p-6 rounded-[2rem] shadow-lg active:scale-95 transition-all group border-b-8 border-green-800"
+        >
+          <div className="text-left">
+            <span className="block text-2xl font-black uppercase leading-none italic">Relatórios</span>
+            <span className="text-[10px] font-bold opacity-80 uppercase tracking-wider italic">Vendas e Faturamento</span>
+          </div>
+          <span className="text-3xl group-hover:scale-110 transition-transform">📊</span>
+        </Link>
+
         {/* Botão Estoque */}
         <Link 
           to="/estoque" 
-          className="flex items-center justify-between bg-white hover:bg-gray-50 text-gray-800 p-8 rounded-[2rem] shadow-lg active:scale-95 transition-all group border-b-8 border-gray-200"
+          className="flex items-center justify-between bg-white hover:bg-gray-50 text-gray-800 p-6 rounded-[2rem] shadow-lg active:scale-95 transition-all group border-b-8 border-gray-200"
         >
           <div className="text-left">
-            <span className="block text-2xl font-black uppercase leading-none">Estoque</span>
+            <span className="block text-xl font-black uppercase leading-none">Estoque</span>
             <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Gestão de Insumos</span>
           </div>
           <span className="text-3xl opacity-50 group-hover:rotate-12 transition-transform">📦</span>
         </Link>
 
-        {/* NOVO: Botão Configuração Pix */}
+        {/* Botão Configuração Pix */}
         <Link 
           to="/config-pix" 
-          className="flex items-center justify-between bg-blue-500 hover:bg-blue-600 text-white p-6 rounded-[2rem] shadow-lg active:scale-95 transition-all group border-b-8 border-blue-700"
+          className="flex items-center justify-between bg-blue-500 hover:bg-blue-600 text-white p-5 rounded-[2rem] shadow-lg active:scale-95 transition-all group border-b-8 border-blue-700"
         >
           <div className="text-left">
-            <span className="block text-xl font-black uppercase leading-none italic">Config. Pix</span>
+            <span className="block text-lg font-black uppercase leading-none italic">Config. Pix</span>
             <span className="text-[10px] font-bold opacity-80 uppercase tracking-wider italic">Ajustar Chave do QR Code</span>
           </div>
           <span className="text-2xl group-hover:scale-110 transition-transform">💎</span>
@@ -62,7 +74,7 @@ export default function Home() {
         {/* Rodapé Interno */}
         <div className="pt-10 space-y-1">
           <p className="text-gray-300 text-[9px] uppercase font-black tracking-widest">
-            Rodhon System v1.2
+            Rodhon System v2.0
           </p>
           <p className="text-gray-200 text-[8px] font-medium italic">
             Desenvolvido por Rodrigo Honório
