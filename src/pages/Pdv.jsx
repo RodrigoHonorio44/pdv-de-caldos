@@ -223,5 +223,5 @@ export default function Pdv() {
         </div>
       )}
     </div>
-  );
+);
 }
