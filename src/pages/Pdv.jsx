@@ -1,37 +1,52 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, addDoc, doc, updateDoc, increment, serverTimestamp, query, where, getDocs, limit, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, doc, updateDoc, increment, serverTimestamp, query, where, getDocs, limit, writeBatch, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
 
-const cardapio = [
+// 1. LISTA FIXA DE CALDOS (Para facilitar a gestão manual)
+const caldosIniciais = [
   { id: 'caldo_verde', nome: 'Caldo Verde', preco: 20.00, tipo: 'caldo' },
   { id: 'caldo_ervilha', nome: 'Caldo de Ervilha', preco: 20.00, tipo: 'caldo' },
   { id: 'abobora_carne_seca', nome: 'Abóbora c/ Carne Seca', preco: 25.00, tipo: 'caldo' },
   { id: 'feijao_camarao', nome: 'Feijão com Camarão', preco: 25.00, tipo: 'caldo' },
   { id: 'vaca_atolada', nome: 'Vaca Atolada', preco: 25.00, tipo: 'caldo' },
   { id: 'dobradinha_especial', nome: 'Dobradinha Especial', preco: 25.00, tipo: 'caldo' },
-  { id: 'imperio_latao', nome: 'Cerveja Império Latão', preco: 10.00, tipo: 'bebida' },
-  { id: 'heineken_latao', nome: 'Cerveja Heineken Latão', preco: 12.00, tipo: 'bebida' },
-  { id: 'coca_lata', nome: 'Coca-Cola Lata', preco: 7.00, tipo: 'bebida' },
-  { id: 'coca_zero_lata', nome: 'Coca-Cola Zero Lata' , preco: 7.00, tipo: 'bebida' }, // ID corrigido
-  { id: 'guarana_antarctica', nome: 'Guaraná Antarctica', preco: 7.00, tipo: 'bebida' }, // Adicionado
-  { id: 'guaramor', nome: 'Guaramor 290ml', preco: 3.00, tipo: 'bebida' },
-  { id: 'agua_sem_gas', nome: 'Água s/ Gás', preco: 3.00, tipo: 'bebida' },
-  { id: 'agua_com_gas', nome: 'Água c/ Gás', preco: 5.00, tipo: 'bebida' }, // Adicionado
 ];
 
 export default function Pdv() {
+  const [bebidasEstoque, setBebidasEstoque] = useState([]);
+  const [caldos, setCaldos] = useState(caldosIniciais);
+  const [modoGestao, setModoGestao] = useState(false); // Para pausar caldos manualmente
+  
   const [caixaAtivo, setCaixaAtivo] = useState(null);
   const [carrinho, setCarrinho] = useState([]);
   const [metodoPgto, setMetodoPgto] = useState('dinheiro');
   const [valorRecebido, setValorRecebido] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [verCarrinho, setVerCarrinho] = useState(false);
+  const [valorAbertura, setValorAbertura] = useState('');
+  
+  const [mostrarResumo, setMostrarResumo] = useState(false);
+  const [resumo, setResumo] = useState({ dinheiro: 0, pix: 0, debito: 0, credito: 0, total: 0 });
 
-  const total = carrinho.reduce((acc, i) => acc + (i.preco * i.qtd), 0);
-  const troco = valorRecebido > total ? valorRecebido - total : 0;
+  const totalVenda = carrinho.reduce((acc, i) => acc + (i.preco * i.qtd), 0);
+  const troco = (metodoPgto === 'dinheiro' && Number(valorRecebido) > totalVenda) ? Number(valorRecebido) - totalVenda : 0;
 
+  // 2. BUSCAR BEBIDAS DO FIRESTORE (ESTOQUE)
+  useEffect(() => {
+    const q = query(collection(db, "estoque"), where("tipo", "==", "bebida"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const lista = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setBebidasEstoque(lista);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 3. VERIFICAR CAIXA ABERTO
   useEffect(() => {
     const carregarCaixa = async () => {
       try {
@@ -48,11 +63,13 @@ export default function Pdv() {
   }, []);
 
   const abrirCaixa = async () => {
+    if (valorAbertura === '' || Number(valorAbertura) < 0) return toast.warning("Digite o valor inicial!");
     setCarregando(true);
     try {
       const dados = {
         abertura: new Date().toISOString(),
         status: 'aberto',
+        valorInicial: Number(valorAbertura),
         vendasTotais: 0,
         contagemItens: {},
         data_abertura: new Date().toLocaleDateString('pt-BR')
@@ -64,164 +81,244 @@ export default function Pdv() {
     setCarregando(false);
   };
 
-  const adicionar = (item) => {
-    const existe = carrinho.find(i => i.id === item.id);
-    if (existe) setCarrinho(carrinho.map(i => i.id === item.id ? { ...i, qtd: i.qtd + 1 } : i));
-    else setCarrinho([...carrinho, { ...item, qtd: 1 }]);
-    toast.message(`+1 ${item.nome}`, { position: 'bottom-center' });
-  };
-
-  // --- FUNÇÃO FINALIZAR VENDA ATUALIZADA COM ABATIMENTO DUPLO ---
   const finalizarVenda = async () => {
     if (carrinho.length === 0) return;
-    if (metodoPgto === 'dinheiro' && valorRecebido < total) {
-        return toast.error("Valor recebido insuficiente!");
+    if (metodoPgto === 'dinheiro' && (!valorRecebido || Number(valorRecebido) < totalVenda)) {
+        return toast.error("Valor insuficiente!");
     }
 
     setCarregando(true);
-    const batch = writeBatch(db); // Usando Batch para atualizar tudo de uma vez
+    const batch = writeBatch(db);
 
     try {
-      // 1. Registrar a Venda
       const vendaRef = doc(collection(db, "vendas"));
       batch.set(vendaRef, {
         caixaId: caixaAtivo.id,
         itens: carrinho,
-        total,
+        total: totalVenda,
         pagamento: metodoPgto,
-        valorRecebido: metodoPgto === 'dinheiro' ? Number(valorRecebido) : total,
+        valorRecebido: metodoPgto === 'dinheiro' ? Number(valorRecebido) : totalVenda,
         troco: metodoPgto === 'dinheiro' ? troco : 0,
         data: serverTimestamp()
       });
 
-      // 2. Atualizar Caixa e Estoques
       const caixaRef = doc(db, "caixas", caixaAtivo.id);
-      const updatesCaixa = { vendasTotais: increment(total) };
+      const updatesCaixa = { vendasTotais: increment(totalVenda) };
 
       for (const item of carrinho) {
         updatesCaixa[`contagemItens.${item.id}`] = increment(item.qtd);
         
-        // ABATIMENTO DUPLO: Tira do que levou pra rua E do patrimônio total
-        const estoqueRef = doc(db, "estoque", item.id);
-        batch.update(estoqueRef, {
-          quantidade_venda: increment(-item.qtd), // Abate do isopor/carro
-          quantidade_total: increment(-item.qtd)  // Abate do estoque geral
-        });
+        // BAIXA NO ESTOQUE APENAS PARA BEBIDAS
+        if (item.tipo === 'bebida') {
+          const estoqueRef = doc(db, "estoque", item.id);
+          batch.update(estoqueRef, {
+            quantidade_venda: increment(-item.qtd),
+            quantidade_total: increment(-item.qtd)
+          });
+        }
       }
 
       batch.update(caixaRef, updatesCaixa);
-
-      // Executa todas as operações
       await batch.commit();
 
-      toast.success(`Venda no ${metodoPgto.toUpperCase()} finalizada!`);
+      setCaixaAtivo(prev => ({ ...prev, vendasTotais: (prev.vendasTotais || 0) + totalVenda }));
+      toast.success("Venda 🚀");
       setCarrinho([]);
       setValorRecebido('');
       setVerCarrinho(false);
-    } catch (e) { 
-      console.error(e);
-      toast.error("Erro ao salvar venda! Verifique se os produtos existem no estoque."); 
-    }
+    } catch (e) { toast.error("Erro ao salvar venda."); }
     setCarregando(false);
   };
 
-  if (carregando && !caixaAtivo) return <div className="min-h-screen bg-orange-500 flex items-center justify-center text-white font-black italic">CARREGANDO...</div>;
+  const adicionar = (item) => {
+    // Lógica do Modo Gestão (Pausar Caldo)
+    if (modoGestao && item.tipo === 'caldo') {
+        setCaldos(prev => prev.map(c => c.id === item.id ? { ...c, esgotado: !c.esgotado } : c));
+        return;
+    }
+
+    // Bloqueios de venda
+    if (item.esgotado) return toast.error("Caldo esgotado!");
+    if (item.tipo === 'bebida' && item.quantidade_venda <= 0) return toast.error("Bebida acabou!");
+
+    const existe = carrinho.find(i => i.id === item.id);
+    if (existe) setCarrinho(carrinho.map(i => i.id === item.id ? { ...i, qtd: i.qtd + 1 } : i));
+    else setCarrinho([...carrinho, { ...item, qtd: 1 }]);
+  };
+
+  const removerUm = (id) => {
+    const item = carrinho.find(i => i.id === id);
+    if (item.qtd > 1) setCarrinho(carrinho.map(i => i.id === id ? { ...i, qtd: i.qtd - 1 } : i));
+    else setCarrinho(carrinho.filter(i => i.id !== id));
+  };
+
+  const prepararFechamento = async () => {
+    setCarregando(true);
+    try {
+      const q = query(collection(db, "vendas"), where("caixaId", "==", caixaAtivo.id));
+      const querySnapshot = await getDocs(q);
+      const totais = { dinheiro: 0, pix: 0, debito: 0, credito: 0, total: 0 };
+      querySnapshot.forEach((doc) => {
+        const v = doc.data();
+        if (totais[v.pagamento] !== undefined) totais[v.pagamento] += v.total;
+        totais.total += v.total;
+      });
+      setResumo(totais);
+      setMostrarResumo(true);
+    } catch (e) { toast.error("Erro ao gerar relatório"); }
+    setCarregando(false);
+  };
+
+  const executarFechamento = async () => {
+    setCarregando(true);
+    try {
+      await updateDoc(doc(db, "caixas", caixaAtivo.id), {
+        status: 'fechado',
+        fechamento: serverTimestamp(),
+        valorVendas: resumo.total,
+        valorFinalEmCaixa: resumo.dinheiro + caixaAtivo.valorInicial
+      });
+      setCaixaAtivo(null);
+      setCarrinho([]);
+      setMostrarResumo(false);
+      toast.success("Caixa encerrado!");
+    } catch (e) { toast.error("Erro ao fechar!"); }
+    setCarregando(false);
+  };
+
+  if (carregando && !caixaAtivo) return <div className="min-h-screen bg-orange-500 flex items-center justify-center text-white font-black uppercase italic">Verificando...</div>;
 
   if (!caixaAtivo) {
     return (
-      <div className="min-h-screen bg-orange-600 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-orange-600 flex flex-col items-center justify-center p-6 text-white">
         <Toaster position="top-center" richColors />
-        <button onClick={abrirCaixa} className="bg-white text-orange-600 w-full max-w-xs py-8 rounded-[2rem] font-black text-2xl shadow-2xl active:scale-95 transition-all">
-          ABRIR CAIXA 🥣
-        </button>
+        <div className="bg-white text-gray-800 w-full max-w-sm rounded-[3rem] p-8 shadow-2xl">
+          <h2 className="text-2xl font-black italic uppercase text-center mb-6 text-orange-600">Abrir Caixa</h2>
+          <input type="number" value={valorAbertura} onChange={(e) => setValorAbertura(e.target.value)} className="w-full bg-gray-50 border-2 border-orange-100 rounded-2xl py-5 text-4xl font-black text-center outline-none mb-6 text-orange-600" placeholder="0,00" />
+          <button onClick={abrirCaixa} className="w-full bg-green-500 py-5 rounded-[2rem] text-white font-black text-xl shadow-xl uppercase italic">Iniciar Turno 🥣</button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans pb-24 lg:pb-0">
+    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       <Toaster position="top-center" richColors />
-      
+
+      {/* MODAL FECHAMENTO */}
+      {mostrarResumo && (
+        <div className="fixed inset-0 z-[100] bg-orange-600 p-6 flex items-center justify-center">
+          <div className="bg-white w-full max-w-md rounded-[3rem] p-8 shadow-2xl text-gray-800">
+            <h2 className="text-xl font-black uppercase text-center mb-6">Conferência Final</h2>
+            <div className="space-y-3 mb-6 font-bold">
+              <div className="flex justify-between border-b pb-2 text-blue-600"><span>Fundo Inicial:</span> <span>R$ {caixaAtivo.valorInicial.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>💵 Dinheiro:</span> <span>R$ {resumo.dinheiro.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>💎 PIX:</span> <span>R$ {resumo.pix.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>💳 Cartão:</span> <span>R$ {(resumo.debito + resumo.credito).toFixed(2)}</span></div>
+              <div className="flex justify-between border-t pt-2 text-lg font-black text-orange-600 uppercase"><span>Total Vendas:</span> <span>R$ {resumo.total.toFixed(2)}</span></div>
+              <div className="bg-green-50 p-4 rounded-2xl border border-green-100 text-center">
+                <p className="text-[10px] uppercase text-green-600 font-black">Dinheiro + Fundo esperado:</p>
+                <p className="text-2xl font-black text-green-700">R$ {(resumo.dinheiro + caixaAtivo.valorInicial).toFixed(2)}</p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setMostrarResumo(false)} className="flex-1 py-4 font-black bg-gray-100 rounded-2xl text-gray-400 uppercase">Voltar</button>
+              <button onClick={executarFechamento} className="flex-2 bg-red-500 text-white px-6 py-4 rounded-2xl font-black uppercase italic shadow-lg">Fechar Agora 🏁</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="p-4 bg-white shadow-sm flex justify-between items-center sticky top-0 z-10">
-        <Link to="/" className="text-orange-500 font-black text-sm italic">⬅ VOLTAR</Link>
-        <h1 className="font-black text-gray-800 uppercase text-xs tracking-tighter text-center italic">Caldos da Tay<br/><span className="text-green-500 text-[8px]">● Caixa Aberto</span></h1>
-        <button onClick={() => setCaixaAtivo(null)} className="text-red-400 text-[10px] font-bold uppercase">Sair</button>
+        <Link to="/" className="text-orange-500 font-black text-xs italic uppercase">⬅ Sair</Link>
+        <button onClick={() => setModoGestao(!modoGestao)} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase ${modoGestao ? 'bg-orange-500 text-white animate-pulse' : 'bg-gray-100 text-gray-400'}`}>
+          {modoGestao ? 'Confirmar Status' : '⚙️ Pausar Caldo'}
+        </button>
+        <button onClick={prepararFechamento} className="bg-red-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg">Encerrar</button>
       </header>
 
-      <main className="p-3 grid grid-cols-2 lg:grid-cols-4 gap-2 overflow-y-auto">
-        {cardapio.map(item => (
-          <button 
-            key={item.id} 
-            onClick={() => adicionar(item)} 
-            className="bg-white p-4 h-28 rounded-3xl shadow-sm border-b-4 border-gray-100 active:translate-y-1 active:border-b-0 flex flex-col justify-center items-center text-center"
-          >
-            <span className="text-[10px] font-black text-gray-400 uppercase leading-none mb-1">{item.nome}</span>
-            <span className="text-lg font-black text-orange-500">R$ {item.preco.toFixed(0)}</span>
+      <main className="p-3 grid grid-cols-2 lg:grid-cols-4 gap-2 pb-24 overflow-y-auto">
+        <div className="col-span-full border-b pb-1 mt-2 mb-1">
+            <span className="text-[10px] font-black text-orange-500 uppercase italic">🥣 Caldos</span>
+        </div>
+        {caldos.map(item => (
+          <button key={item.id} onClick={() => adicionar(item)} className={`p-4 h-28 rounded-[2rem] shadow-sm border-b-4 flex flex-col justify-center items-center relative transition-all ${item.esgotado ? 'bg-gray-200 grayscale border-gray-300' : 'bg-white border-gray-100'} ${modoGestao ? 'ring-2 ring-orange-400' : ''}`}>
+            {item.esgotado && <span className="absolute top-2 bg-red-500 text-white text-[7px] font-black px-2 py-0.5 rounded-full uppercase">Acabou</span>}
+            <span className="text-[10px] font-black text-gray-400 uppercase leading-tight mb-1 text-center">{item.nome}</span>
+            <span className={`text-lg font-black italic ${item.esgotado ? 'text-gray-400' : 'text-orange-500'}`}>R$ {item.preco.toFixed(0)}</span>
+          </button>
+        ))}
+
+        <div className="col-span-full border-b pb-1 mt-4 mb-1">
+            <span className="text-[10px] font-black text-blue-500 uppercase italic">🍺 Bebidas (Estoque Rua)</span>
+        </div>
+        {bebidasEstoque.map(item => (
+          <button key={item.id} onClick={() => adicionar(item)} className="bg-white p-4 h-28 rounded-[2rem] shadow-sm border-b-4 border-gray-100 flex flex-col justify-center items-center relative">
+            <span className="text-[10px] font-black text-gray-400 uppercase leading-tight mb-1 text-center">{item.nome}</span>
+            <span className="text-lg font-black text-orange-500 italic">R$ {Number(item.preco).toFixed(0)}</span>
+            <span className={`absolute bottom-2 right-4 text-[8px] font-bold ${item.quantidade_venda < 5 ? 'text-red-500' : 'text-gray-300'}`}>{item.quantidade_venda} UN</span>
           </button>
         ))}
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 shadow-xl lg:hidden">
-        <button 
-          onClick={() => setVerCarrinho(true)}
-          className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black flex justify-between px-6 items-center active:scale-95 transition-all"
-        >
-          <span className="text-xs uppercase italic">{carrinho.length} itens</span>
-          <span className="text-xl italic">R$ {total.toFixed(2)}</span>
+      {/* BOTÃO MOBILE */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 lg:hidden flex gap-2">
+         <button onClick={() => setVerCarrinho(true)} className="flex-grow bg-orange-500 text-white py-4 rounded-2xl font-black flex justify-between px-6 items-center">
+          <span className="text-xs uppercase italic">{carrinho.reduce((a,b)=>a+b.qtd,0)} ITENS</span>
+          <span className="text-xl italic font-mono text-white">R$ {totalVenda.toFixed(2)}</span>
         </button>
       </div>
 
+      {/* PAINEL CARRINHO */}
       {(verCarrinho || window.innerWidth > 1024) && (
         <div className={`fixed inset-0 z-20 bg-black/60 backdrop-blur-sm lg:relative lg:bg-transparent lg:inset-auto lg:block ${verCarrinho ? 'flex' : 'hidden'} items-end`}>
-          <div className="bg-white w-full max-h-[90vh] rounded-t-[3rem] p-6 shadow-2xl flex flex-col lg:fixed lg:right-4 lg:top-24 lg:w-96 lg:rounded-[2.5rem]">
+          <div className="bg-white w-full max-h-[90vh] rounded-t-[3rem] p-6 shadow-2xl flex flex-col lg:fixed lg:right-4 lg:top-24 lg:w-96 lg:rounded-[3rem] lg:h-[80vh]">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-black uppercase italic text-gray-800 tracking-tighter">Resumo</h2>
+              <h2 className="text-xl font-black uppercase italic text-gray-800">Carrinho</h2>
               <button onClick={() => setVerCarrinho(false)} className="lg:hidden text-gray-300 text-4xl leading-none">×</button>
             </div>
 
-            <div className="flex-grow overflow-y-auto space-y-2 mb-4 pr-1">
+            <div className="flex-grow overflow-y-auto space-y-2 mb-4">
               {carrinho.map(item => (
-                <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-2xl border border-gray-100">
-                  <span className="font-bold text-gray-700 text-sm">{item.qtd}x {item.nome}</span>
-                  <span className="font-black text-orange-500 italic text-sm">R$ {(item.preco * item.qtd).toFixed(2)}</span>
+                <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-2xl border border-gray-100 text-gray-800">
+                  <div className="flex flex-col">
+                    <span className="font-bold text-[10px] uppercase">{item.nome}</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <button onClick={() => removerUm(item.id)} className="bg-white border w-6 h-6 rounded-full font-black">-</button>
+                      <span className="font-black text-xs">{item.qtd}</span>
+                      <button onClick={() => adicionar(item)} className="bg-white border w-6 h-6 rounded-full font-black">+</button>
+                    </div>
+                  </div>
+                  <span className="font-black text-orange-500 text-xs italic">R$ {(item.preco * item.qtd).toFixed(2)}</span>
                 </div>
               ))}
             </div>
 
-            <div className="space-y-3 border-t pt-4 border-gray-100">
+            <div className="space-y-3 border-t pt-4">
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setMetodoPgto('dinheiro')} className={`py-3 rounded-xl font-black text-[10px] uppercase transition-all ${metodoPgto === 'dinheiro' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>💵 Dinheiro</button>
-                <button onClick={() => setMetodoPgto('pix')} className={`py-3 rounded-xl font-black text-[10px] uppercase transition-all ${metodoPgto === 'pix' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>💎 PIX</button>
-                <button onClick={() => setMetodoPgto('debito')} className={`py-3 rounded-xl font-black text-[10px] uppercase transition-all ${metodoPgto === 'debito' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>💳 Débito</button>
-                <button onClick={() => setMetodoPgto('credito')} className={`py-3 rounded-xl font-black text-[10px] uppercase transition-all ${metodoPgto === 'credito' ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>💳 Crédito</button>
+                {['dinheiro', 'pix', 'debito', 'credito'].map((m) => (
+                  <button key={m} onClick={() => setMetodoPgto(m)} className={`py-3 rounded-xl font-black text-[9px] uppercase transition-all ${metodoPgto === m ? 'bg-orange-500 text-white shadow-md' : 'bg-gray-100 text-gray-400'}`}>
+                    {m === 'dinheiro' ? '💵 Dinheiro' : m === 'pix' ? '💎 PIX' : '💳 ' + m}
+                  </button>
+                ))}
               </div>
 
               {metodoPgto === 'dinheiro' && (
-                <input 
-                  type="number" 
-                  value={valorRecebido} 
-                  onChange={(e) => setValorRecebido(e.target.value)} 
-                  className="w-full bg-gray-50 p-4 rounded-2xl font-black text-2xl text-center outline-none border-2 border-orange-100 focus:border-orange-500" 
-                  placeholder="RECEBIDO" 
-                />
+                <input type="number" value={valorRecebido} onChange={(e) => setValorRecebido(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl font-black text-2xl text-center text-orange-600 border-2 border-orange-100 outline-none" placeholder="RECEBIDO" />
               )}
 
-              <div className="flex justify-between text-3xl font-black text-gray-900 py-1">
-                <span className="text-[10px] self-center text-gray-400 uppercase italic">Total:</span>
-                <span className="tracking-tighter italic">R$ {total.toFixed(2)}</span>
+              <div className="flex justify-between text-2xl font-black text-gray-900 px-1 italic">
+                <span className="text-[10px] self-center text-gray-400 uppercase">Total:</span>
+                <span className="text-orange-600">R$ {totalVenda.toFixed(2)}</span>
               </div>
 
-              <button 
-                onClick={finalizarVenda} 
-                disabled={carregando} 
-                className={`w-full py-5 rounded-3xl font-black text-xl shadow-xl transition-all active:scale-95 uppercase italic ${carregando ? 'bg-gray-300' : 'bg-green-500 text-white'}`}
-              >
-                {carregando ? '...' : 'Finalizar 🚀'}
+              <button onClick={finalizarVenda} disabled={carregando || carrinho.length === 0} className={`w-full py-5 rounded-3xl font-black text-xl shadow-xl uppercase italic ${carregando || carrinho.length === 0 ? 'bg-gray-300' : 'bg-green-500 text-white'}`}>
+                Concluir 🚀
               </button>
             </div>
           </div>
         </div>
       )}
     </div>
-);
+  );
 }
