@@ -47,10 +47,22 @@ export default function Home() {
           <span className="text-3xl opacity-50 group-hover:rotate-12 transition-transform">📦</span>
         </Link>
 
+        {/* NOVO: Botão Configuração Pix */}
+        <Link 
+          to="/config-pix" 
+          className="flex items-center justify-between bg-blue-500 hover:bg-blue-600 text-white p-6 rounded-[2rem] shadow-lg active:scale-95 transition-all group border-b-8 border-blue-700"
+        >
+          <div className="text-left">
+            <span className="block text-xl font-black uppercase leading-none italic">Config. Pix</span>
+            <span className="text-[10px] font-bold opacity-80 uppercase tracking-wider italic">Ajustar Chave do QR Code</span>
+          </div>
+          <span className="text-2xl group-hover:scale-110 transition-transform">💎</span>
+        </Link>
+
         {/* Rodapé Interno */}
         <div className="pt-10 space-y-1">
           <p className="text-gray-300 text-[9px] uppercase font-black tracking-widest">
-            Rodhon System v1.0
+            Rodhon System v1.2
           </p>
           <p className="text-gray-200 text-[8px] font-medium italic">
             Desenvolvido por Rodrigo Honório
