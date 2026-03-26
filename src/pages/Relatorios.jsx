@@ -3,7 +3,7 @@ import { db } from '../firebase/config';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 
-// Importações ajustadas para evitar o erro "doc.autoTable is not a function" no Vite
+// Importações para o PDF
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -64,49 +64,36 @@ export default function Relatorios() {
     processarRelatorio();
   }, [caixaSelecionado, caixas]);
 
-  // FUNÇÃO ATUALIZADA: Suporta String ISO e Timestamp do Firebase
   const formatarHora = (data) => {
     if (!data) return "--:--";
     try {
-      // Se for Timestamp do Firebase (objeto com .seconds)
       if (data.seconds) {
-        return new Date(data.seconds * 1000).toLocaleTimeString('pt-BR', { 
-          hour: '2-digit', minute: '2-digit' 
-        });
+        return new Date(data.seconds * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       }
-      // Se for String ISO (ex: "2026-03-25T15:17:09.129Z")
       const d = new Date(data);
-      if (!isNaN(d.getTime())) {
-        return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      }
-      return "--:--";
-    } catch (e) {
-      return "--:--";
-    }
+      return !isNaN(d.getTime()) ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "--:--";
+    } catch (e) { return "--:--"; }
   };
 
   const gerarPDF = () => {
     const doc = new jsPDF();
-    const dataRef = detalhesCaixa?.data_abertura || new Date().toLocaleDateString('pt-BR');
+    const fundo = Number(detalhesCaixa?.valorInicial || 0);
+    const brutoComFundo = resumo.totalGeral + fundo;
+    const dinheiroEsperado = resumo.metodos.dinheiro + fundo;
 
-    doc.setFontSize(20);
+    doc.setFontSize(18);
     doc.setTextColor(255, 102, 0);
-    doc.text("CALDOS DA TAY - FECHAMENTO", 14, 20);
+    doc.text("CALDOS DA TAY - RELATÓRIO COMPLETO", 14, 20);
     
-    doc.setFontSize(10);
-    doc.setTextColor(0);
-    doc.text(`Data: ${dataRef} | Caixa ID: ${caixaSelecionado.substring(0,8)}`, 14, 30);
-    doc.text(`Abertura: ${formatarHora(detalhesCaixa?.abertura)} | Fechamento: ${formatarHora(detalhesCaixa?.fechamento)}`, 14, 35);
-
     autoTable(doc, {
-      startY: 45,
-      head: [['FORMA DE PAGAMENTO', 'VALOR TOTAL']],
+      startY: 40,
+      head: [['DESCRIÇÃO', 'VALOR']],
       body: [
-        ['DINHEIRO', `R$ ${resumo.metodos.dinheiro.toFixed(2)}`],
-        ['PIX', `R$ ${resumo.metodos.pix.toFixed(2)}`],
-        ['CARTÃO DE DÉBITO', `R$ ${resumo.metodos.debito.toFixed(2)}`],
-        ['CARTÃO DE CRÉDITO', `R$ ${resumo.metodos.credito.toFixed(2)}`],
-        ['TOTAL DO TURNO', `R$ ${resumo.totalGeral.toFixed(2)}`],
+        ['VENDAS TOTAIS DO DIA', `R$ ${resumo.totalGeral.toFixed(2)}`],
+        ['FUNDO DE CAIXA INICIAL', `R$ ${fundo.toFixed(2)}`],
+        ['TOTAL EM GAVETA (DINHEIRO + FUNDO)', `R$ ${dinheiroEsperado.toFixed(2)}`],
+        ['----------------------------------', '-------------'],
+        ['BRUTO GERAL (VENDAS + FUNDO)', `R$ ${brutoComFundo.toFixed(2)}`],
       ],
       headStyles: { fillColor: [255, 102, 0] },
       styles: { fontStyle: 'bold' }
@@ -114,17 +101,21 @@ export default function Relatorios() {
 
     const itens = Object.entries(resumo.produtos)
       .sort((a,b) => b[1] - a[1])
-      .map(([n, q]) => [n, q]);
+      .map(([n, q]) => [n, `${q} un`]);
 
     autoTable(doc, {
       startY: doc.lastAutoTable.finalY + 10,
-      head: [['PRODUTO', 'QUANTIDADE']],
+      head: [['PRODUTO', 'QTD']],
       body: itens,
       headStyles: { fillColor: [50, 50, 50] }
     });
 
-    doc.save(`Fechamento_${caixaSelecionado.substring(0,5)}.pdf`);
+    doc.save(`Relatorio_${detalhesCaixa?.data_abertura}.pdf`);
   };
+
+  const fundoCaixa = Number(detalhesCaixa?.valorInicial || 0);
+  const totalGeralComFundo = resumo.totalGeral + fundoCaixa;
+  const totalSomenteGaveta = resumo.metodos.dinheiro + fundoCaixa;
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 font-sans max-w-lg mx-auto">
@@ -155,19 +146,40 @@ export default function Relatorios() {
           <p className="font-black text-gray-800">{formatarHora(detalhesCaixa?.abertura)}</p>
         </div>
         <div className="text-center">
+          <p className="text-[10px] font-bold text-gray-400 uppercase">Fundo Inicial</p>
+          <p className="font-black text-orange-600">R$ {fundoCaixa.toFixed(2)}</p>
+        </div>
+        <div className="text-center">
           <p className="text-[10px] font-bold text-gray-400 uppercase">Fechamento</p>
           <p className="font-black text-gray-800">{formatarHora(detalhesCaixa?.fechamento)}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <div className="col-span-2 bg-orange-500 p-6 rounded-[2rem] text-white shadow-lg">
-          <p className="text-xs font-bold uppercase opacity-80">Total Bruto</p>
-          <p className="text-4xl font-black">R$ {resumo.totalGeral.toFixed(2)}</p>
+      <div className="space-y-3 mb-6">
+        {/* CARD PRINCIPAL: BRUTO GERAL */}
+        <div className="bg-orange-500 p-6 rounded-[2rem] text-white shadow-lg text-center">
+          <p className="text-xs font-bold uppercase opacity-80">Bruto Total (Vendas + Fundo)</p>
+          <p className="text-4xl font-black">R$ {totalGeralComFundo.toFixed(2)}</p>
         </div>
-        
+
+        <div className="grid grid-cols-2 gap-3">
+          {/* CARD: TOTAL SÓ DE VENDAS */}
+          <div className="bg-white p-5 rounded-[2rem] border-2 border-orange-100 text-center shadow-sm">
+            <p className="text-[9px] font-black text-gray-400 uppercase">Total Vendas do Dia</p>
+            <p className="text-xl font-black text-orange-600">R$ {resumo.totalGeral.toFixed(2)}</p>
+          </div>
+
+          {/* CARD: CONFERÊNCIA GAVETA */}
+          <div className="bg-green-600 p-5 rounded-[2rem] text-white shadow-md text-center flex flex-col justify-center">
+            <p className="text-[9px] font-bold uppercase opacity-90 leading-tight">Gaveta (Dinheiro + Fundo)</p>
+            <p className="text-xl font-black">R$ {totalSomenteGaveta.toFixed(2)}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mb-6">
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-          <p className="text-[9px] font-black text-gray-400 uppercase">💵 Dinheiro</p>
+          <p className="text-[9px] font-black text-gray-400 uppercase">💵 Dinheiro (Venda)</p>
           <p className="text-lg font-black text-green-600">R$ {resumo.metodos.dinheiro.toFixed(2)}</p>
         </div>
         <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">

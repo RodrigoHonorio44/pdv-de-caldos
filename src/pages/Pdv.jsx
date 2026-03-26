@@ -177,21 +177,24 @@ export default function Pdv() {
   const executarFechamento = async () => {
     setCarregando(true);
     try {
+      const momentoFechamento = new Date();
       await updateDoc(doc(db, "caixas", caixaAtivo.id), {
         status: 'fechado',
         fechamento: serverTimestamp(),
+        data_fechamento: momentoFechamento.toLocaleDateString('pt-BR'),
+        hora_fechamento: momentoFechamento.toLocaleTimeString('pt-BR'),
         valorVendas: resumo.total,
         valorFinalEmCaixa: resumo.dinheiro + caixaAtivo.valorInicial
       });
       setCaixaAtivo(null);
       setCarrinho([]);
       setMostrarResumo(false);
-      toast.success("Caixa encerrado!");
+      setValorAbertura(''); // Limpa o campo para a próxima abertura
+      toast.success("Caixa encerrado com sucesso!");
     } catch (e) { toast.error("Erro ao fechar!"); }
     setCarregando(false);
   };
 
-  // GERADOR DE PIX CORRIGIDO COM CRC16 E FORMATAÇÃO BACEN
   const gerarPixString = () => {
     if (!dadosPix.chave) return "";
     
@@ -203,13 +206,11 @@ export default function Pdv() {
       .replace(/[\u0300-\u036f]/g, "");
     const cidade = (dadosPix.cidade || "MARICA").toUpperCase();
 
-    // Função para formatar [ID][TAMANHO][CONTEUDO]
     const f = (id, conteudo) => {
       const tam = conteudo.length.toString().padStart(2, '0');
       return `${id}${tam}${conteudo}`;
     };
 
-    // Montagem do Payload Base
     let payload = 
       f("00", "01") + 
       f("26", f("00", "br.gov.bcb.pix") + f("01", chave)) + 
@@ -222,7 +223,6 @@ export default function Pdv() {
       f("62", f("05", "***")) +
       "6304"; 
 
-    // Cálculo do CRC16
     let crc = 0xFFFF;
     for (let i = 0; i < payload.length; i++) {
       crc ^= (payload.charCodeAt(i) << 8);
