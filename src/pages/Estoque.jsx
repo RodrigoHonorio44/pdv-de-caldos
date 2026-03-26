@@ -22,15 +22,23 @@ export default function Estoque() {
   const [itens, setItens] = useState([]);
   const [carregando, setCarregando] = useState(true);
   
-  // Estados para Cadastro de Produto
   const [novoNome, setNovoNome] = useState('');
   const [novoPreco, setNovoPreco] = useState('');
   const [tipo, setTipo] = useState('bebida');
 
-  // Estados para Gasto do Evento
   const [nomeEvento, setNomeEvento] = useState('');
-  const [valorGasto, setValorGasto] = useState('');
+  const [valorGasto, setValorGasto] = useState(''); // Agora é string para a máscara
   const [eventoAtivo, setEventoAtivo] = useState(null);
+
+  // MÁSCARA DE MOEDA PARA O GASTO TOTAL
+  const handleGastoChange = (e) => {
+    let value = e.target.value.replace(/\D/g, "");
+    if (!value) return setValorGasto("");
+    const formatted = (Number(value) / 100).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+    });
+    setValorGasto(formatted);
+  };
 
   const normalizarID = (texto) => {
     return texto
@@ -43,14 +51,12 @@ export default function Estoque() {
   };
 
   useEffect(() => {
-    // Escuta o estoque
     const unsubscribeEstoque = onSnapshot(collection(db, "estoque"), (snapshot) => {
       const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setItens(lista);
       setCarregando(false);
     });
 
-    // Escuta o evento ativo para mostrar o gasto atual
     const q = query(collection(db, "eventos"), where("status", "==", "ativo"), limit(1));
     const unsubscribeEvento = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
@@ -66,20 +72,21 @@ export default function Estoque() {
     };
   }, []);
 
-  // Função para cadastrar o investimento (Gasto Total)
   const salvarGastoEvento = async (e) => {
     e.preventDefault();
     if (!nomeEvento || !valorGasto) return toast.warning("Preencha o nome e o valor do investimento!");
 
+    // LIMPEZA CRÍTICA: Remove pontos e troca vírgula por ponto
+    const valorNumerico = parseFloat(valorGasto.replace(/\./g, '').replace(',', '.'));
+
     try {
-      // Se já houver um ativo, encerramos antes de criar o novo
       if (eventoAtivo) {
         await updateDoc(doc(db, "eventos", eventoAtivo.id), { status: 'encerrado' });
       }
 
       await addDoc(collection(db, "eventos"), {
         nome: nomeEvento.toLowerCase(),
-        custo_inicial: Number(valorGasto),
+        custo_inicial: valorNumerico,
         status: 'ativo',
         criado_em: serverTimestamp()
       });
@@ -92,13 +99,12 @@ export default function Estoque() {
     }
   };
 
+  // ... (restante das funções cadastrarProduto, alternarStatusCaldo, etc permanecem iguais)
   const cadastrarProduto = async (e) => {
     e.preventDefault();
     if (!novoNome) return toast.warning("Digite o nome!");
     if (!novoPreco) return toast.warning("Defina um preço!");
-    
     const idFormatado = normalizarID(novoNome);
-
     try {
       await setDoc(doc(db, "estoque", idFormatado), {
         nome: novoNome.toLowerCase(),
@@ -119,9 +125,7 @@ export default function Estoque() {
       const novoStatus = !statusAtual;
       await updateDoc(doc(db, "estoque", id), { esgotado: novoStatus });
       toast.info(novoStatus ? "Caldo Pausado" : "Caldo Liberado");
-    } catch (e) { 
-      toast.error("Erro ao atualizar status"); 
-    }
+    } catch (e) { toast.error("Erro ao atualizar status"); }
   };
 
   const adicionarAoCentral = async (id, qtd) => {
@@ -200,14 +204,17 @@ export default function Estoque() {
             value={nomeEvento}
             onChange={(e) => setNomeEvento(e.target.value)}
           />
-          <input 
-            type="number" 
-            placeholder="R$ GASTO TOTAL" 
-            className="w-full md:w-48 bg-red-900/20 p-4 rounded-2xl font-black text-red-500 outline-none border border-red-900/30 text-2xl text-center focus:border-red-500"
-            value={valorGasto}
-            onChange={(e) => setValorGasto(e.target.value)}
-          />
-          <button type="submit" className="bg-red-600 text-white px-8 py-4 rounded-2xl font-black uppercase italic shadow-lg active:scale-95 transition-all text-xs">
+          <div className="relative w-full md:w-64">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-red-500">R$</span>
+            <input 
+              type="text" 
+              placeholder="0,00" 
+              className="w-full bg-slate-800 p-4 pl-12 rounded-2xl font-black text-red-500 outline-none border border-slate-700 text-2xl text-center focus:border-red-500"
+              value={valorGasto}
+              onChange={handleGastoChange}
+            />
+          </div>
+          <button type="submit" className="bg-red-600 text-white px-8 py-4 rounded-2xl font-black uppercase italic shadow-lg active:scale-95 transition-all text-[10px]">
             {eventoAtivo ? 'ATUALIZAR INVESTIMENTO' : 'LANÇAR GASTO'}
           </button>
         </form>
@@ -220,13 +227,15 @@ export default function Estoque() {
             </div>
             <div className="text-right">
               <p className="text-[8px] text-slate-500 font-black uppercase italic">Dívida Inicial</p>
-              <p className="text-red-500 font-black text-xl italic">- R$ {eventoAtivo.custo_inicial.toFixed(2)}</p>
+              <p className="text-red-500 font-black text-2xl italic">
+                - R$ {Number(eventoAtivo.custo_inicial).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Cadastro de Produtos */}
+      {/* Cadastro de Produtos (Permanece igual) */}
       <div className="max-w-5xl mx-auto bg-white p-6 rounded-[2.5rem] shadow-xl shadow-gray-200/50 mb-10 border-2 border-orange-50">
         <h2 className="text-[9px] font-black text-gray-400 uppercase mb-4 tracking-widest px-2 italic">Novo Registro de Mercadoria</h2>
         <form onSubmit={cadastrarProduto} className="flex flex-col md:flex-row gap-3">
@@ -253,12 +262,12 @@ export default function Estoque() {
         </form>
       </div>
 
+      {/* Listas de Itens (Estoque Central / Rua) */}
       <div className="max-w-5xl mx-auto space-y-12">
         {carregando ? (
           <div className="text-center font-black text-gray-200 py-20 uppercase italic text-4xl animate-pulse">Sincronizando...</div>
         ) : (
           <>
-            {/* SEÇÃO CALDOS */}
             <section>
               <div className="flex items-center gap-3 mb-6 px-2">
                 <div className="h-6 w-1.5 bg-orange-500 rounded-full"></div>
@@ -283,7 +292,6 @@ export default function Estoque() {
               </div>
             </section>
 
-            {/* SEÇÃO BEBIDAS E OUTROS */}
             <section>
               <div className="flex items-center gap-3 mb-6 px-2">
                 <div className="h-6 w-1.5 bg-blue-500 rounded-full"></div>

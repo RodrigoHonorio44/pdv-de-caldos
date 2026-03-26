@@ -302,10 +302,10 @@ export default function Pdv() {
             <p className="text-[11px] font-black text-gray-800 leading-none">{agora.toLocaleTimeString()}</p>
             {eventoAtivo ? (
               <div className={`mt-1 px-3 py-0.5 rounded-full border ${saldoReal >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                 <p className={`text-[9px] font-black italic uppercase leading-none ${saldoReal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                   {saldoReal >= 0 ? 'LUCRO: ' : 'INVEST: '} 
-                   R$ {Math.abs(saldoReal).toFixed(2)}
-                 </p>
+                  <p className={`text-[9px] font-black italic uppercase leading-none ${saldoReal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {saldoReal >= 0 ? 'LUCRO: ' : 'INVEST: '} 
+                    R$ {Math.abs(saldoReal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
               </div>
             ) : (
               <p className="text-[8px] font-bold text-gray-400 uppercase">{agora.toLocaleDateString()}</p>
@@ -343,7 +343,9 @@ export default function Pdv() {
           >
             <span className="text-[10px] font-black text-gray-400 uppercase leading-tight mb-1 text-center line-clamp-2">{item.nome}</span>
             <span className="text-lg font-black text-orange-500 italic">R$ {Number(item.preco).toFixed(0)}</span>
-            <span className={`absolute bottom-2 right-4 text-[8px] font-bold ${item.quantidade_venda < 5 ? 'text-red-500' : 'text-gray-300'}`}>{item.quantidade_venda} UN</span>
+            <span className={`absolute bottom-2 right-4 text-[10px] font-black italic transition-all ${item.quantidade_venda <= 3 ? 'text-red-500 animate-pulse' : 'text-green-500'}`}>
+              {item.quantidade_venda} UN
+            </span>
           </button>
         ))}
       </main>
