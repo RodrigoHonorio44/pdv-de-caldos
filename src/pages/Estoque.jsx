@@ -1,16 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '../firebase/config';
-import { collection, doc, setDoc, updateDoc, deleteDoc, increment, writeBatch, onSnapshot } from 'firebase/firestore';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  increment, 
+  writeBatch, 
+  onSnapshot, 
+  query, 
+  where, 
+  limit, 
+  addDoc, 
+  serverTimestamp 
+} from 'firebase/firestore';
 import { Toaster, toast } from 'sonner';
 
 export default function Estoque() {
   const [itens, setItens] = useState([]);
   const [carregando, setCarregando] = useState(true);
   
+  // Estados para Cadastro de Produto
   const [novoNome, setNovoNome] = useState('');
   const [novoPreco, setNovoPreco] = useState('');
   const [tipo, setTipo] = useState('bebida');
+
+  // Estados para Gasto do Evento
+  const [nomeEvento, setNomeEvento] = useState('');
+  const [valorGasto, setValorGasto] = useState('');
+  const [eventoAtivo, setEventoAtivo] = useState(null);
 
   const normalizarID = (texto) => {
     return texto
@@ -23,13 +43,54 @@ export default function Estoque() {
   };
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "estoque"), (snapshot) => {
+    // Escuta o estoque
+    const unsubscribeEstoque = onSnapshot(collection(db, "estoque"), (snapshot) => {
       const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setItens(lista);
       setCarregando(false);
     });
-    return () => unsubscribe();
+
+    // Escuta o evento ativo para mostrar o gasto atual
+    const q = query(collection(db, "eventos"), where("status", "==", "ativo"), limit(1));
+    const unsubscribeEvento = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setEventoAtivo({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else {
+        setEventoAtivo(null);
+      }
+    });
+
+    return () => {
+      unsubscribeEstoque();
+      unsubscribeEvento();
+    };
   }, []);
+
+  // Função para cadastrar o investimento (Gasto Total)
+  const salvarGastoEvento = async (e) => {
+    e.preventDefault();
+    if (!nomeEvento || !valorGasto) return toast.warning("Preencha o nome e o valor do investimento!");
+
+    try {
+      // Se já houver um ativo, encerramos antes de criar o novo
+      if (eventoAtivo) {
+        await updateDoc(doc(db, "eventos", eventoAtivo.id), { status: 'encerrado' });
+      }
+
+      await addDoc(collection(db, "eventos"), {
+        nome: nomeEvento.toLowerCase(),
+        custo_inicial: Number(valorGasto),
+        status: 'ativo',
+        criado_em: serverTimestamp()
+      });
+
+      toast.success("Investimento registrado com sucesso!");
+      setNomeEvento('');
+      setValorGasto('');
+    } catch (e) {
+      toast.error("Erro ao registrar investimento.");
+    }
+  };
 
   const cadastrarProduto = async (e) => {
     e.preventDefault();
@@ -40,7 +101,7 @@ export default function Estoque() {
 
     try {
       await setDoc(doc(db, "estoque", idFormatado), {
-        nome: novoNome.toLowerCase(), // Padronização para minúsculas
+        nome: novoNome.toLowerCase(),
         preco: Number(novoPreco),
         quantidade_total: 0,
         quantidade_venda: 0,
@@ -111,7 +172,6 @@ export default function Estoque() {
     } catch (e) { toast.error("Erro ao excluir"); }
   };
 
-  // Separação de dados
   const caldos = itens.filter(i => i.tipo === 'caldo');
   const outrosItens = itens.filter(i => i.tipo !== 'caldo');
 
@@ -126,9 +186,49 @@ export default function Estoque() {
         </button>
       </header>
 
-      {/* Cadastro */}
+      {/* SEÇÃO: CADASTRO DE INVESTIMENTO DO EVENTO (CUSTO TOTAL) */}
+      <div className="max-w-5xl mx-auto bg-slate-900 p-6 rounded-[2.5rem] shadow-xl mb-10 border-b-8 border-slate-800">
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xl">📊</span>
+          <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] italic">Investimento Inicial do Evento</h2>
+        </div>
+        <form onSubmit={salvarGastoEvento} className="flex flex-col md:flex-row gap-3">
+          <input 
+            type="text" 
+            placeholder="NOME DO EVENTO (EX: CARNAVAL 2026)" 
+            className="flex-grow bg-slate-800 p-4 rounded-2xl font-bold outline-none text-white uppercase text-sm border border-slate-700 focus:border-orange-500"
+            value={nomeEvento}
+            onChange={(e) => setNomeEvento(e.target.value)}
+          />
+          <input 
+            type="number" 
+            placeholder="R$ GASTO TOTAL" 
+            className="w-full md:w-48 bg-red-900/20 p-4 rounded-2xl font-black text-red-500 outline-none border border-red-900/30 text-2xl text-center focus:border-red-500"
+            value={valorGasto}
+            onChange={(e) => setValorGasto(e.target.value)}
+          />
+          <button type="submit" className="bg-red-600 text-white px-8 py-4 rounded-2xl font-black uppercase italic shadow-lg active:scale-95 transition-all text-xs">
+            {eventoAtivo ? 'ATUALIZAR INVESTIMENTO' : 'LANÇAR GASTO'}
+          </button>
+        </form>
+        
+        {eventoAtivo && (
+          <div className="mt-4 flex items-center justify-between bg-slate-800/50 p-4 rounded-2xl border border-slate-700">
+            <div>
+              <p className="text-[8px] text-slate-500 font-black uppercase italic">Evento Ativo Agora</p>
+              <h3 className="text-orange-400 font-black uppercase text-sm italic">{eventoAtivo.nome}</h3>
+            </div>
+            <div className="text-right">
+              <p className="text-[8px] text-slate-500 font-black uppercase italic">Dívida Inicial</p>
+              <p className="text-red-500 font-black text-xl italic">- R$ {eventoAtivo.custo_inicial.toFixed(2)}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Cadastro de Produtos */}
       <div className="max-w-5xl mx-auto bg-white p-6 rounded-[2.5rem] shadow-xl shadow-gray-200/50 mb-10 border-2 border-orange-50">
-        <h2 className="text-[9px] font-black text-gray-400 uppercase mb-4 tracking-widest px-2 italic">Novo Registro</h2>
+        <h2 className="text-[9px] font-black text-gray-400 uppercase mb-4 tracking-widest px-2 italic">Novo Registro de Mercadoria</h2>
         <form onSubmit={cadastrarProduto} className="flex flex-col md:flex-row gap-3">
           <input 
             type="text" 
@@ -158,7 +258,7 @@ export default function Estoque() {
           <div className="text-center font-black text-gray-200 py-20 uppercase italic text-4xl animate-pulse">Sincronizando...</div>
         ) : (
           <>
-            {/* SEÇÃO CALDOS - GRID ESTILO CARDÁPIO */}
+            {/* SEÇÃO CALDOS */}
             <section>
               <div className="flex items-center gap-3 mb-6 px-2">
                 <div className="h-6 w-1.5 bg-orange-500 rounded-full"></div>
@@ -183,7 +283,7 @@ export default function Estoque() {
               </div>
             </section>
 
-            {/* SEÇÃO BEBIDAS E OUTROS - LISTA COM CONTROLE */}
+            {/* SEÇÃO BEBIDAS E OUTROS */}
             <section>
               <div className="flex items-center gap-3 mb-6 px-2">
                 <div className="h-6 w-1.5 bg-blue-500 rounded-full"></div>

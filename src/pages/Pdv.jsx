@@ -9,6 +9,7 @@ export default function Pdv() {
   const [bebidasEstoque, setBebidasEstoque] = useState([]);
   const [caldos, setCaldos] = useState([]);
   const [caixaAtivo, setCaixaAtivo] = useState(null);
+  const [eventoAtivo, setEventoAtivo] = useState(null); // Estado para o investimento
   const [carrinho, setCarrinho] = useState([]);
   const [metodoPgto, setMetodoPgto] = useState('dinheiro');
   const [valorRecebido, setValorRecebido] = useState('');
@@ -24,9 +25,25 @@ export default function Pdv() {
   const totalVenda = carrinho.reduce((acc, i) => acc + (i.preco * i.qtd), 0);
   const troco = (metodoPgto === 'dinheiro' && Number(valorRecebido) > totalVenda) ? Number(valorRecebido) - totalVenda : 0;
 
+  // Cálculo do Saldo Real (Vendas do Caixa - Custo Inicial do Evento)
+  const saldoReal = (caixaAtivo?.vendasTotais || 0) - (eventoAtivo?.custo_inicial || 0);
+
   useEffect(() => {
     const timer = setInterval(() => setAgora(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Monitorar Evento/Investimento Ativo
+  useEffect(() => {
+    const q = query(collection(db, "eventos"), where("status", "==", "ativo"), limit(1));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        setEventoAtivo({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+      } else {
+        setEventoAtivo(null);
+      }
+    });
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -65,13 +82,20 @@ export default function Pdv() {
     const carregarCaixa = async () => {
       try {
         const q = query(collection(db, "caixas"), where("status", "==", "aberto"), limit(1));
-        const querySnapshot = await getDocs(q);
-        if (!querySnapshot.empty) {
-          const docSnap = querySnapshot.docs[0];
-          setCaixaAtivo({ id: docSnap.id, ...docSnap.data() });
-        }
-      } catch (e) { console.error(e); }
-      finally { setCarregando(false); }
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          if (!snapshot.empty) {
+            const docSnap = snapshot.docs[0];
+            setCaixaAtivo({ id: docSnap.id, ...docSnap.data() });
+          } else {
+            setCaixaAtivo(null);
+          }
+          setCarregando(false);
+        });
+        return () => unsubscribe();
+      } catch (e) { 
+        console.error(e); 
+        setCarregando(false);
+      }
     };
     carregarCaixa();
   }, []);
@@ -189,7 +213,7 @@ export default function Pdv() {
       setCaixaAtivo(null);
       setCarrinho([]);
       setMostrarResumo(false);
-      setValorAbertura(''); // Limpa o campo para a próxima abertura
+      setValorAbertura('');
       toast.success("Caixa encerrado com sucesso!");
     } catch (e) { toast.error("Erro ao fechar!"); }
     setCarregando(false);
@@ -197,32 +221,15 @@ export default function Pdv() {
 
   const gerarPixString = () => {
     if (!dadosPix.chave) return "";
-    
     const valor = totalVenda.toFixed(2);
     const chave = dadosPix.chave.replace(/\s/g, "");
-    const nome = (dadosPix.beneficiario || "CALDOS DA TAY")
-      .toUpperCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
+    const nome = (dadosPix.beneficiario || "CALDOS DA TAY").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     const cidade = (dadosPix.cidade || "MARICA").toUpperCase();
-
     const f = (id, conteudo) => {
       const tam = conteudo.length.toString().padStart(2, '0');
       return `${id}${tam}${conteudo}`;
     };
-
-    let payload = 
-      f("00", "01") + 
-      f("26", f("00", "br.gov.bcb.pix") + f("01", chave)) + 
-      "52040000" + 
-      "5303986" + 
-      f("54", valor) + 
-      "5802BR" + 
-      f("59", nome) + 
-      f("60", cidade) + 
-      f("62", f("05", "***")) +
-      "6304"; 
-
+    let payload = f("00", "01") + f("26", f("00", "br.gov.bcb.pix") + f("01", chave)) + "52040000" + "5303986" + f("54", valor) + "5802BR" + f("59", nome) + f("60", cidade) + f("62", f("05", "***")) + "6304"; 
     let crc = 0xFFFF;
     for (let i = 0; i < payload.length; i++) {
       crc ^= (payload.charCodeAt(i) << 8);
@@ -232,11 +239,10 @@ export default function Pdv() {
       }
     }
     const crcResult = (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
-    
     return payload + crcResult;
   };
 
-  if (carregando && !caixaAtivo) return <div className="min-h-screen bg-orange-500 flex items-center justify-center text-white font-black uppercase italic text-3xl">Carregando...</div>;
+  if (carregando && !caixaAtivo) return <div className="min-h-screen bg-orange-500 flex items-center justify-center text-white font-black uppercase italic text-3xl animate-pulse">Sincronizando...</div>;
 
   if (!caixaAtivo) {
     return (
@@ -291,9 +297,19 @@ export default function Pdv() {
             </Link>
         </div>
         
+        {/* TERMÔMETRO DE LUCRO PERTO DA HORA */}
         <div className="text-center">
             <p className="text-[11px] font-black text-gray-800 leading-none">{agora.toLocaleTimeString()}</p>
-            <p className="text-[8px] font-bold text-gray-400 uppercase">{agora.toLocaleDateString()}</p>
+            {eventoAtivo ? (
+              <div className={`mt-1 px-3 py-0.5 rounded-full border ${saldoReal >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                 <p className={`text-[9px] font-black italic uppercase leading-none ${saldoReal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                   {saldoReal >= 0 ? 'LUCRO: ' : 'INVEST: '} 
+                   R$ {Math.abs(saldoReal).toFixed(2)}
+                 </p>
+              </div>
+            ) : (
+              <p className="text-[8px] font-bold text-gray-400 uppercase">{agora.toLocaleDateString()}</p>
+            )}
         </div>
 
         <button onClick={prepararFechamento} className="bg-red-500 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase shadow-lg hover:bg-red-600 transition-all">Encerrar</button>
@@ -347,7 +363,7 @@ export default function Pdv() {
               <button onClick={() => setVerCarrinho(false)} className="lg:hidden text-gray-300 text-4xl leading-none px-2">×</button>
             </div>
 
-            <div className="flex-grow space-y-2 mb-4">
+            <div className="flex-grow space-y-2 mb-4 overflow-y-auto pr-2">
               {carrinho.map(item => (
                 <div key={item.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-2xl border border-gray-100">
                   <div className="flex flex-col">
@@ -363,7 +379,7 @@ export default function Pdv() {
               ))}
             </div>
 
-            <div className="space-y-3 border-t pt-4">
+            <div className="space-y-3 border-t pt-4 bg-white">
               <div className="grid grid-cols-2 gap-2">
                 {['dinheiro', 'pix', 'debito', 'credito'].map((m) => (
                   <button key={m} onClick={() => setMetodoPgto(m)} className={`py-3 rounded-xl font-black text-[9px] uppercase transition-all ${metodoPgto === m ? 'bg-slate-900 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}>
@@ -392,14 +408,6 @@ export default function Pdv() {
                           </div>
                         )}
                     </div>
-                    {dadosPix.chave && (
-                      <button 
-                          onClick={() => { navigator.clipboard.writeText(gerarPixString()); toast.info("Copia e Cola copiado!"); }}
-                          className="text-[8px] font-black text-blue-400 uppercase underline mt-1"
-                      >
-                          Copiar Código Pix
-                      </button>
-                    )}
                 </div>
               )}
 
