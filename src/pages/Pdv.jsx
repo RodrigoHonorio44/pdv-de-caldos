@@ -9,7 +9,8 @@ export default function Pdv() {
   const [bebidasEstoque, setBebidasEstoque] = useState([]);
   const [caldos, setCaldos] = useState([]);
   const [caixaAtivo, setCaixaAtivo] = useState(null);
-  const [eventoAtivo, setEventoAtivo] = useState(null); // Estado para o investimento
+  const [eventoAtivo, setEventoAtivo] = useState(null);
+  const [vendasAcumuladas, setVendasAcumuladas] = useState(0); // Novo estado para soma global
   const [carrinho, setCarrinho] = useState([]);
   const [metodoPgto, setMetodoPgto] = useState('dinheiro');
   const [valorRecebido, setValorRecebido] = useState('');
@@ -25,15 +26,16 @@ export default function Pdv() {
   const totalVenda = carrinho.reduce((acc, i) => acc + (i.preco * i.qtd), 0);
   const troco = (metodoPgto === 'dinheiro' && Number(valorRecebido) > totalVenda) ? Number(valorRecebido) - totalVenda : 0;
 
-  // Cálculo do Saldo Real (Vendas do Caixa - Custo Inicial do Evento)
-  const saldoReal = (caixaAtivo?.vendasTotais || 0) - (eventoAtivo?.custo_inicial || 0);
+  // CÁLCULO DO SALDO REAL: Soma de todas as vendas do evento - Custo Inicial
+  const saldoReal = vendasAcumuladas - (eventoAtivo?.custo_inicial || 0);
+  const isPositivo = saldoReal >= 0;
 
   useEffect(() => {
     const timer = setInterval(() => setAgora(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Monitorar Evento/Investimento Ativo
+  // Monitorar Evento Ativo
   useEffect(() => {
     const q = query(collection(db, "eventos"), where("status", "==", "ativo"), limit(1));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -45,6 +47,30 @@ export default function Pdv() {
     });
     return () => unsubscribe();
   }, []);
+
+  // MONITORAMENTO GLOBAL DE VENDAS DO EVENTO (Para o número não resetar)
+  useEffect(() => {
+    if (!eventoAtivo) {
+      setVendasAcumuladas(0);
+      return;
+    }
+
+    // Busca todas as vendas realizadas desde que o evento foi criado
+    const q = query(
+      collection(db, "vendas"), 
+      where("data", ">=", eventoAtivo.criado_em)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      let totalSoma = 0;
+      snapshot.forEach((doc) => {
+        totalSoma += doc.data().total || 0;
+      });
+      setVendasAcumuladas(totalSoma);
+    });
+
+    return () => unsubscribe();
+  }, [eventoAtivo]);
 
   useEffect(() => {
     const buscarConfig = async () => {
@@ -133,6 +159,7 @@ export default function Pdv() {
       const vendaRef = doc(collection(db, "vendas"));
       batch.set(vendaRef, {
         caixaId: caixaAtivo.id,
+        eventoId: eventoAtivo?.id || null, // Vínculo com o evento
         itens: carrinho,
         total: totalVenda,
         pagamento: metodoPgto,
@@ -176,7 +203,7 @@ export default function Pdv() {
   };
 
   const removerUm = (id) => {
-    const item = carrinho.find(i => i.id === id);
+    const item = carrinho.find(i => id === i.id);
     if (item.qtd > 1) setCarrinho(carrinho.map(i => i.id === id ? { ...i, qtd: i.qtd - 1 } : i));
     else setCarrinho(carrinho.filter(i => i.id !== id));
   };
@@ -297,14 +324,17 @@ export default function Pdv() {
             </Link>
         </div>
         
-        {/* TERMÔMETRO DE LUCRO PERTO DA HORA */}
+        {/* TERMÔMETRO DINÂMICO QUE MUDA DE COR */}
         <div className="text-center">
             <p className="text-[11px] font-black text-gray-800 leading-none">{agora.toLocaleTimeString()}</p>
             {eventoAtivo ? (
-              <div className={`mt-1 px-3 py-0.5 rounded-full border ${saldoReal >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                  <p className={`text-[9px] font-black italic uppercase leading-none ${saldoReal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {saldoReal >= 0 ? 'LUCRO: ' : 'INVEST: '} 
-                    R$ {Math.abs(saldoReal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <div className={`mt-1 px-4 py-1 rounded-full border-2 transition-all duration-700 shadow-sm
+                ${isPositivo ? 'bg-green-100 border-green-400 scale-105' : 'bg-red-50 border-red-300'}`}
+              >
+                  <p className={`text-[10px] font-black italic uppercase leading-none 
+                    ${isPositivo ? 'text-green-700' : 'text-red-600'}`}>
+                    {isPositivo ? '🚀 LUCRO: ' : '📉 FALTAM: '} 
+                    R$ {Math.abs(saldoReal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </p>
               </div>
             ) : (
@@ -350,6 +380,7 @@ export default function Pdv() {
         ))}
       </main>
 
+      {/* FOOTER MOBILE */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 lg:hidden flex gap-2 z-30">
          <button onClick={() => setVerCarrinho(true)} className="flex-grow bg-orange-500 text-white py-4 rounded-2xl font-black flex justify-between px-6 items-center shadow-lg active:scale-95 transition-all">
           <span className="text-xs uppercase italic">{carrinho.reduce((a,b)=>a+b.qtd,0)} ITENS</span>
@@ -357,6 +388,7 @@ export default function Pdv() {
         </button>
       </div>
 
+      {/* CARRINHO LATERAL / OVERLAY */}
       {(verCarrinho || (typeof window !== 'undefined' && window.innerWidth > 1024)) && (
         <div className={`fixed inset-0 z-[60] lg:z-20 bg-black/60 backdrop-blur-sm lg:relative lg:bg-transparent lg:inset-auto lg:block ${verCarrinho ? 'flex' : 'hidden'} items-end`}>
           <div className="bg-white w-full max-h-[95vh] rounded-t-[3rem] p-6 shadow-2xl flex flex-col lg:fixed lg:right-4 lg:top-20 lg:w-96 lg:rounded-[3rem] lg:h-[85vh] animate-in slide-in-from-bottom lg:animate-none overflow-y-auto scrollbar-hide">
